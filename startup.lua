@@ -6,12 +6,12 @@ table.count = function(t)
 	return n
 end
 
-local NetworkManager = dofile("network-manager.lua")
-local Worker = dofile("worker.lua")
-local TurtleUtil = dofile("turtle-util.lua")
+local NetworkManager = dofile("turtle-vault/network-manager.lua")
+local Worker = dofile("turtle-vault/worker.lua")
+local TurtleUtil = dofile("turtle-vault/turtle-util.lua")
 
 if not fs.exists("profile.data") then
-	local setup, err = loadfile("setup.lua")
+	local setup, err = loadfile("turtle-vault/setup.lua")
 
 	if not setup then
 		error(err)
