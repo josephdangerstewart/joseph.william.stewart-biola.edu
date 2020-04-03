@@ -158,6 +158,37 @@ function TurtleUtil:selectFreeSlot()
 	return false
 end
 
+function TurtleUtil:organize()
+	local inventoryByItem = {}
+	for i = 1, 16 do
+		if turtle.getItemCount(i) > 0 then
+			local details = turtle.getItemDetail(i)
+
+			if inventoryByItem[details.name] == nil then
+				inventoryByItem[details.name] = {}
+			end
+
+			table.insert(inventoryByItem[details.name], { slot = i, count = details.count })
+		end
+	end
+
+	local compare = function(a, b) return a.count < b.count end
+
+	for i,v in pairs(inventoryByItem) do
+		table.sort(v, compare)
+
+		for cur = 1, #v - 1 do
+			for target = #v, #v, -1 do
+				turtle.select(v[cur].slot)
+				
+				if turtle.transferTo(v[target].slot) and turtle.getItemCount() > 0 then
+					break
+				end
+			end
+		end
+	end
+end
+
 function TurtleUtil:goTo(coords)
 	if self.pos.z ~= coords.z then
 		local moveFunc

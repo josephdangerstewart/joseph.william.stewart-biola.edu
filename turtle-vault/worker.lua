@@ -181,7 +181,10 @@ function Worker:poll()
 	end
 
 	if not self.turtleUtil:selectFreeSlot() then
-		self:putAwayItems()
+		self.turtleUtil:organize()
+		if not self.turtleUtil:selectFreeSlot() then
+			self:putAwayItems()
+		end
 	end
 end
 
