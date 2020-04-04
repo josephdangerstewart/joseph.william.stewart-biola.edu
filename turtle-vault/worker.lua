@@ -110,6 +110,10 @@ function Worker:doIndex(items)
 	end
 
 	self.updateIndex(self.index)
+	self:sendIndexUpdate()
+end
+
+function Worker:sendIndexUpdate()
 	local msg = {
 		command = "index",
 		index = self.index

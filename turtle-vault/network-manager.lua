@@ -63,6 +63,8 @@ function NetworkManager:processMessage(data)
 		local output = data.output
 
 		self.worker:pickupItems(order, output)
+	elseif data.command == "do-index" then
+		self.worker:sendIndexUpdate()
 	end
 end
 
