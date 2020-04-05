@@ -37,58 +37,43 @@ function Worker:compare(a, b)
 end
 
 function Worker:allocateNewChest()
-	local lastChest = {
-		x = 2,
-		y = 2,
-		z = 1,
-	}
+	local potentials = {}
 	local roomSize = self.roomSize
-
-	if table.count(self.index) == 0 then
-		return lastChest
+	for x = 2, roomSize.x - 1, 3 do
+		potentials[x] = {}
+		for y = 2, roomSize.y - 1, 2 do
+			potentials[x][y] = {}
+			for z = 1, roomSize.z - 1, 2 do
+				potentials[x][y][z] = true
+			end
+		end
 	end
-	
+
 	for i,v in pairs(self.index) do
-		if v.chest.y > lastChest.y then
-			lastChest.x = v.chest.x
-			lastChest.z = v.chest.z
-			lastChest.y = v.chest.y
-		end
+		potentials[v.chest.x][v.chest.y][v.chest.z] = false
 
-		if v.chest.z > lastChest.z and v.chest.y == lastChest.y then
-			lastChest.x = v.chest.x
-			lastChest.z = v.chest.z
-		end
-
-		if v.chest.x > lastChest.x and v.chest.z == lastChest.z and v.chest.y == lastChest.y then
-			lastChest.x = v.chest.x
+		if v.pastChests ~= nil then
+			for n, pastChest in pairs(v.pastChests) do
+				potentials[pastChest.chest.x][pastChest.chest.y][pastChest.chest.z] = false
+			end
 		end
 	end
 
-	if lastChest.x + 3 < roomSize.x then
-		-- Try and increase x first
-		return {
-			x = lastChest.x + 3,
-			z = lastChest.z,
-			y = lastChest.y
-		}
-	elseif lastChest.z + 2 < roomSize.z then
-		-- Try and increase z next
-		return {
-			x = 2,
-			z = lastChest.z + 2,
-			y = lastChest.y,
-		}
-	elseif lastChest.y + 2 < roomSize.y then
-		-- Try and increase y next
-		return {
-			x = 2,
-			z = 1,
-			y = lastChest.y + 2,
-		}
-	else
-		return nil
+	for x = 2, roomSize.x - 1, 3 do
+		for y = 2, roomSize.y - 1, 2 do
+			for z = 1, roomSize.z - 1, 2 do
+				if potentials[x][y][z] then
+					return {
+						x = x,
+						y = y,
+						z = z,
+					}
+				end
+			end
+		end
 	end
+
+	return nil
 end
 
 function Worker:doIndex(items)
@@ -107,6 +92,28 @@ function Worker:doIndex(items)
 		if self.index[i] ~= nil then
 			self.index[i].count = self.index[i].count + v.diff
 		end
+	end
+
+	-- Check for any entries with a count of 0 or below and free up those chests
+	local indexEntriesToRemove = {}
+	for i,v in pairs(self.index) do
+		if v.count <= 0 then
+			table.insert(indexEntriesToRemove, i)
+		elseif (v.currentChestCount or v.count) <= 0 then
+			if v.pastChests ~= nil and #v.pastChests > 0 then
+				nextChest = v.pastChests[#v.pastChests]
+				table.remove(v.pastChests, #v.pastChests)
+
+				v.chest = nextChest.chest
+				v.currentChestCount = nextChest.count
+			else
+				table.insert(indexEntriesToRemove, i)
+			end
+		end
+	end
+
+	for i,v in pairs(indexEntriesToRemove) do
+		self.index[v] = nil
 	end
 
 	self.updateIndex(self.index)
@@ -201,7 +208,42 @@ function Worker:pickupItems(order, output)
 			local itemCount = self.turtleUtil:countOf(v.item)
 
 			if itemCount < v.count then
-				table.insert(chests, { count = v.count - itemCount, chest = indexEntry.chest, item = v.item })
+				-- Try and get everything we need from the current chest
+				local availableInChest = indexEntry.currentChestCount or indexEntry.count
+				local itemCountInChest = math.min(v.count, availableInChest)
+				table.insert(chests, {
+					count = itemCountInChest,
+					chest = indexEntry.chest,
+					item = v.item,
+					decreaseCount = function(ammount)
+						indexEntry.currentChestCount = indexEntry.currentChestCount - ammount
+						self.updateIndex(self.index)
+					end
+				})
+
+				if itemCountInChest ~= v.count and indexEntry.pastChests ~= nil then
+					local remaining = v.count - itemCountInChest
+
+					for n = #indexEntry.pastChests, 1, -1 do
+						local nextChest = indexEntry.pastChests[n]
+						itemCountInChest = math.min(remaining, itemCountInChest)
+
+						table.insert(chests, {
+							count = itemCountInChest,
+							chest = nextChest.chest,
+							item = v.item,
+							decreaseCount = function(ammount)
+								nextChest.count = nextChest.count - ammount
+								self.updateIndex(self.index)
+							end
+						})
+
+						remaining = remaining - itemCountInChest
+						if remaining <= 0 then
+							break
+						end
+					end
+				end
 			end
 		end
 	end
@@ -226,13 +268,29 @@ function Worker:pickupItems(order, output)
 				batchSize = 64
 			end
 
-			if not turtle.suck(batchSize) then
+			local countBefore = self.turtleUtil:countOf(v.item)
+			local gotItem = turtle.suck(batchSize)
+			local countAfter = self.turtleUtil:countOf(v.item)
+			if not gotItem or (countAfter - countBefore) ~= batchSize then
 				if not self.turtleUtil:selectFreeSlot() then
-					table.insert(nextOrder, { item = v.item, count = remaining })
+					local orderItem = nil
+					for n, order in pairs(nextOrder) do
+						if order.item == v.item then
+							orderItem = order
+							break
+						end
+					end
+
+					if orderItem == nil then
+						table.insert(nextOrder, { item = v.item, count = remaining })
+					else
+						orderItem.count = orderItem.count + remaining
+					end
 				end
 				break
 			end
 
+			v.decreaseCount(countAfter - countBefore)
 			remaining = remaining - batchSize
 		end
 	end
@@ -306,7 +364,54 @@ function Worker:putAwayItems()
 			self.turtleUtil:face("n")
 
 			while self.turtleUtil:selectItem(v.item) do
-				turtle.drop()
+				local itemStackCount = turtle.getItemCount()
+				if not turtle.drop() or turtle.getItemCount() > 0 then
+					-- Try to dynamically allocate a new chest if the current chest
+					-- is full
+					local nextChest = self:allocateNewChest()
+
+					if nextChest == nil then
+						break
+					end
+
+					if self.index[v.item].pastChests == nil then
+						self.index[v.item].pastChests = {}
+					end
+
+					local totalPutIn = itemStackCount - turtle.getItemCount()
+					local countInChest
+					if self.index[v.item].currentChestCount ~= nil then
+						countInChest = self.index[v.item].currentChestCount + totalPutIn
+					else
+						countInChest = self.index[v.item].count - self.turtleUtil:countOf(v.item)
+					end
+
+					local chestHistoryEntry = {
+						chest = self.index[v.item].chest,
+						isFull = true,
+						count = countInChest
+					}
+
+					table.insert(self.index[v.item].pastChests, chestHistoryEntry)
+
+					self.index[v.item].currentChestCount = 0
+					self.index[v.item].chest = nextChest
+
+					self.turtleUtil:goTo({
+						x = nextChest.x,
+						y = nextChest.y - 1,
+						z = nextChest.z
+					})
+
+					self.turtleUtil:face("n")
+				else
+					if self.index[v.item].currentChestCount == nil then
+						self.index[v.item].currentChestCount = self.index[v.item].count - self.turtleUtil:countOf(v.item)
+					else
+						self.index[v.item].currentChestCount = self.index[v.item].currentChestCount + itemStackCount
+					end
+				end
+				self.updateIndex(self.index)
 			end
 		end
 	end
@@ -333,8 +438,10 @@ function Worker:putAwayItems()
 		end
 	end
 
+	local changesToIndex = self:getInventoryChange()
+	self:doIndex(changesToIndex)
+
 	self.turtleUtil:goToStart()
-	self:updateInventory()
 end
 
 return Worker
